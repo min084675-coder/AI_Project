@@ -11,6 +11,7 @@ const statusEl = document.getElementById("status");
 
 const CHAT_API_URL = "http://localhost:5000/chat";
 const PROACTIVE_API_URL = "http://localhost:5000/proactive";
+const OBSERVE_API_URL = "http://localhost:5000/observe";
 const CELL_SIZE = 20;
 
 const OBJECT_TYPES = {
@@ -63,6 +64,15 @@ function remember(event) {
   state.relationship.memories.push(event);
   state.relationship.memories = state.relationship.memories.slice(-12);
   saveRelationship();
+  notifyLunaObservation(event);
+}
+
+function notifyLunaObservation(event) {
+  fetch(OBSERVE_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event, context: buildLunaContext() }),
+  }).catch(() => {});
 }
 
 // ---------- グリッドユーティリティ ----------
@@ -1010,6 +1020,10 @@ async function requestAutonomousAction() {
       if (data.reply) {
         showLunaSpeech(data.reply);
         appendChatLine("Luna", data.reply);
+      }
+      if (data.reason) {
+        state.lastActionResult = `Lunaの判断: ${data.reason}`;
+        remember(state.lastActionResult);
       }
       if (data.target) trySetGoal(data.target);
       if (data.spell) castLunaSpell();

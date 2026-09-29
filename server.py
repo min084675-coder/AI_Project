@@ -61,6 +61,7 @@ def autonomy():
         action = result.get("action")
         return jsonify({
             "reply": result.get("reply", ""),
+            "reason": result.get("reason", ""),
             "target": action if action in luna.TARGET_CATEGORIES else None,
             "spell": action == "spell",
         })
@@ -78,6 +79,15 @@ def proactive():
         return jsonify({"reply": luna.generate_proactive_line(context)})
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
+
+
+@app.route("/observe", methods=["POST", "OPTIONS"])
+def observe():
+    if request.method == "OPTIONS":
+        return "", 200
+    body = request.get_json(silent=True) or {}
+    luna.observe({"event": body.get("event", ""), "context": body.get("context", {})})
+    return jsonify({"status": "recorded"})
 
 
 @app.route("/reset", methods=["POST", "OPTIONS"])
