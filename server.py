@@ -44,7 +44,37 @@ def chat():
 
     try:
         result = luna.send_with_intent(user_message)
-        return jsonify(result)  # {"reply": ..., "fetch_apple": true/false}
+        return jsonify(result)  # {"reply": ..., "target": "apple"/"water"/"treasure"/"enemy"/None}
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/autonomy", methods=["POST", "OPTIONS"])
+def autonomy():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    context = request.get_json(silent=True) or {}
+    try:
+        result = luna.decide_autonomous_action(context)
+        action = result.get("action")
+        return jsonify({
+            "reply": result.get("reply", ""),
+            "target": action if action in luna.TARGET_CATEGORIES else None,
+            "spell": action == "spell",
+        })
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/proactive", methods=["POST", "OPTIONS"])
+def proactive():
+    if request.method == "OPTIONS":
+        return "", 200
+
+    context = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"reply": luna.generate_proactive_line(context)})
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
 
