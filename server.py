@@ -38,12 +38,13 @@ def chat():
 
     body = request.get_json(silent=True) or {}
     user_message = body.get("message", "").strip()
+    game_context = body.get("gameContext") or {}
 
     if not user_message:
         return jsonify({"error": "message が空です"}), 400
 
     try:
-        result = luna.send_with_intent(user_message)
+        result = luna.send_with_intent(user_message, game_context)
         return jsonify(result)  # {"reply": ..., "target": "apple"/"water"/"treasure"/"enemy"/None}
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502

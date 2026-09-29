@@ -110,9 +110,12 @@ class LunaChat:
             {
                 "role": "system",
                 "content": (
-                    "あなたはゲームキャラクターLunaの自律行動を決める分類器です。"
-                    "残っている物体、HP、MP、持ち物を見て、次に行う行動を1つ選んでください。"
+                    "あなたはImmutableCore.txtの人格を持つLuna本人です。"
+                    "人格、好感度、最近の記憶、現在の状態を一貫して守りながら、"
+                    "観察→判断→行動を行ってください。"
+                    "残っている物体、HP、MP、持ち物を観察し、次に行う行動を1つ選んでください。"
                     f"選択肢は {category_list} です。探索対象がなければ null にしてください。"
+                    "lastResultは直前の行動結果なので、同じ失敗を繰り返さないでください。"
                     "魔法はMPが15以上のときだけ選べます。JSONのみで返してください。"
                     '形式: {"action": "apple", "reply": "短い日本語の発言"}',
                 ),
@@ -161,14 +164,21 @@ class LunaChat:
             raise RuntimeError(f"LM Studioとの通信に失敗しました: {response.status_code}")
         return response.json()["choices"][0]["message"]["content"].strip()[:60]
 
-    def send_with_intent(self, user_message: str) -> dict:
+    def send_with_intent(self, user_message: str, game_context: dict | None = None) -> dict:
         """通常の会話応答を生成したうえで、続けて
         『ユーザーの発言はLunaに何を探しに/取りに行くよう頼んだものか』を
         モデル自身に分類させる。会話履歴（self.messages）には影響しない。
 
         戻り値: {"reply": str, "target": "apple" | "water" | "treasure" | "enemy" | None}
         """
-        reply = self.send(user_message)
+        if game_context:
+            context_message = (
+                f"\n\n[現在のゲーム状態]\n{json.dumps(game_context, ensure_ascii=False)}\n"
+                "この状態とあなたの人格・記憶を踏まえて返答してください。"
+            )
+            reply = self.send(user_message + context_message)
+        else:
+            reply = self.send(user_message)
         target = self._classify_target(user_message, reply)
         return {"reply": reply, "target": target}
 

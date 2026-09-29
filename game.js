@@ -275,7 +275,7 @@ function createGameState(relationship = loadRelationship(), areaIndex = 0, entry
   const areaPortals = [];
   if (areaIndex > 0) areaPortals.push({ direction: "previous", x: portalSpots[0].x, y: portalSpots[0].y, radius: 24 });
   if (areaIndex < AREA_CONFIG.length - 1) areaPortals.push({ direction: "next", x: portalSpots[1].x, y: portalSpots[1].y, radius: 24 });
-  return { room, walls, grid, luna, player, objects, gates, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
+  return { room, walls, grid, luna, player, objects, gates, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", lastActionResult: "新しいエリアを観察中", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
 }
 
 let state = createGameState();
@@ -420,6 +420,7 @@ function trySetGoal(targetType) {
   state.luna.currentGoalType = targetType;
   state.luna.targetObject = obj;
   state.status = "moving";
+  state.lastActionResult = `${obj.label}へ向かい始めた`;
   appendChatLine("System", `（Lunaが${obj.label}${obj.emoji}に向かって歩き出しました）`);
 }
 
@@ -473,7 +474,10 @@ function applyObjectEffect(character, characterLabel, obj) {
       remember(`${obj.label}を見つけた`);
     }
   }
-  if (obj.found) gainExperience(character, characterLabel, obj.type === "enemy" ? 30 : 8);
+  if (obj.found) {
+    gainExperience(character, characterLabel, obj.type === "enemy" ? 30 : 8);
+    state.lastActionResult = `${characterLabel}が${obj.label}を解決した`;
+  }
 }
 
 function createFieldEffect(x, y, color = "#b58cff", type = "burst") {
@@ -588,6 +592,7 @@ function startBattle(attacker, attackerLabel, enemyObj) {
     appendChatLine("Battle", `🏆 ${attackerLabel}が${enemyObj.label}を倒した！`);
     enemyObj.found = true;
     gainExperience(attacker, attackerLabel, 35);
+    state.lastActionResult = `${attackerLabel}が敵を倒した`;
     if (attacker === state.luna) showLunaSpeech("倒した！");
   } else if (attacker.hp <= 0) {
     appendChatLine("Battle", `💀 ${attackerLabel}は力尽きてしまった…（HPを1で持ちこたえた）`);
@@ -969,7 +974,16 @@ async function requestAutonomousAction() {
     const response = await fetch(AUTONOMY_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ terrain, remaining: remainingObjects.map((obj) => obj.label), hp: state.luna.hp, mp: state.luna.mp, inventory: state.luna.inventory }),
+      body: JSON.stringify({
+        area: AREA_CONFIG[state.areaIndex].name,
+        status: state.status,
+        terrain,
+        remaining: remainingObjects.map((obj) => obj.label),
+        luna: { hp: state.luna.hp, hpMax: state.luna.hpMax, mp: state.luna.mp, mpMax: state.luna.mpMax, inventory: state.luna.inventory, level: state.luna.level },
+        affinity: state.relationship.affinity,
+        memories: state.relationship.memories.slice(-8),
+        lastResult: state.lastActionResult,
+      }),
     });
     const data = await response.json();
     if (response.ok) {
@@ -1033,11 +1047,14 @@ async function maybeLunaTalk() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        area: AREA_CONFIG[state.areaIndex].name,
         status: state.status,
         target: state.luna.targetObject ? state.luna.targetObject.label : null,
         terrain,
+        luna: { hp: state.luna.hp, hpMax: state.luna.hpMax, mp: state.luna.mp, mpMax: state.luna.mpMax, inventory: state.luna.inventory, level: state.luna.level },
         affinity: state.relationship.affinity,
         memories: state.relationship.memories.slice(-6),
+        lastResult: state.lastActionResult,
         nearby: remainingObjects.filter((obj) => isPointVisible(obj)).map((obj) => obj.label),
       }),
     });
@@ -1067,7 +1084,17 @@ async function sendChatMessage(message) {
     const response = await fetch(CHAT_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        message,
+        gameContext: {
+          area: AREA_CONFIG[state.areaIndex].name,
+          status: state.status,
+          luna: { hp: state.luna.hp, hpMax: state.luna.hpMax, mp: state.luna.mp, mpMax: state.luna.mpMax, inventory: state.luna.inventory, level: state.luna.level },
+          affinity: state.relationship.affinity,
+          memories: state.relationship.memories.slice(-8),
+          lastResult: state.lastActionResult,
+        },
+      }),
     });
     const data = await response.json();
 
