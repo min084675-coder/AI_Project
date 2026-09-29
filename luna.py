@@ -98,6 +98,7 @@ class LunaChat:
         """会話履歴をシステムプロンプトだけの状態に戻す"""
         system_msg = self.messages[0]
         self.messages = [system_msg]
+        self.observations = []
 
     def history(self):
         """現在の会話履歴（system含む）をそのまま返す"""
@@ -130,7 +131,9 @@ class LunaChat:
                     "観察→判断→行動を行ってください。"
                     "残っている物体、HP、MP、持ち物を観察し、次に行う行動を1つ選んでください。"
                     f"選択肢は {category_list} です。探索対象がなければ null にしてください。"
-                    "lastResultは直前の行動結果なので、同じ失敗を繰り返さないでください。"
+                    "lastResultはゲーム側が確定した直前の実結果です。reasonは今回だけの判断理由で、記憶ではありません。"
+                    "memoriesは将来の行動を変える価値がある重要経験、observationsは短期観察です。"
+                    "過去の失敗や成功を使って、同じ状況でも次の行動を変えてください。"
                     "魔法はMPが15以上のときだけ選べます。JSONのみで返してください。"
                     '形式: {"action": "apple", "reply": "短い日本語の発言", "reason": "判断理由"}',
                 ),
@@ -171,6 +174,7 @@ class LunaChat:
                     "入力のterrainにはフィールドに残っている物体数が入っています。"
                     "リンゴ、水、宝箱、敵の残数やnearbyの見えている物体に必ず少し触れてください。"
                     "affinityはあなたとユーザーの好感度、memoriesは最近の出来事です。"
+                    "observationsは短期観察、lastResultは直前の実結果、reasonは一時的な判断理由です。"
                     "好感度や記憶を不自然にならない範囲で会話に反映してください。"
                     "控えめで自然な一文、60文字以内にしてください。説明やJSONは不要です。"
                 ),

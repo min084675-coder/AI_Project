@@ -64,15 +64,20 @@ function remember(event) {
   state.relationship.memories.push(event);
   state.relationship.memories = state.relationship.memories.slice(-12);
   saveRelationship();
-  notifyLunaObservation(event);
 }
 
-function notifyLunaObservation(event) {
+function recordObservation(event) {
   fetch(OBSERVE_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ event, context: buildLunaContext() }),
   }).catch(() => {});
+}
+
+function setActionResult(result, importantMemory = null) {
+  state.lastActionResult = result;
+  recordObservation(result);
+  if (importantMemory) remember(importantMemory);
 }
 
 // ---------- グリッドユーティリティ ----------
@@ -285,7 +290,7 @@ function createGameState(relationship = loadRelationship(), areaIndex = 0, entry
   const areaPortals = [];
   if (areaIndex > 0) areaPortals.push({ direction: "previous", x: portalSpots[0].x, y: portalSpots[0].y, radius: 24 });
   if (areaIndex < AREA_CONFIG.length - 1) areaPortals.push({ direction: "next", x: portalSpots[1].x, y: portalSpots[1].y, radius: 24 });
-  return { room, walls, grid, luna, player, objects, gates, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", lastActionResult: "新しいエリアを観察中", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
+  return { room, walls, grid, luna, player, objects, gates, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", lastActionResult: { type: "area_started", success: true, summary: "新しいエリアを観察中" }, lastDecisionReason: "", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
 }
 
 let state = createGameState();
@@ -351,7 +356,7 @@ function checkGateInteractions(character, characterLabel) {
       character.inventory.splice(keyIndex, 1);
       gate.open = true;
       changeAffinity(character === state.luna ? 2 : 0);
-      remember(`${characterLabel}が古い鍵でゲートを開けた`);
+      setActionResult({ type: "gate_unlocked", success: true, actor: characterLabel, summary: "古い鍵でゲートを開けた" }, character === state.luna ? `${characterLabel}が古い鍵でゲートを開けた` : null);
       appendChatLine("System", `🔑 ${characterLabel}が古い鍵でゲートを開けた！`);
     } else if (character === state.player) {
       appendChatLine("System", "🔒 ゲートは閉じている。古い鍵が必要です。");
@@ -423,8 +428,7 @@ function trySetGoal(targetType) {
   const path = findPath({ x: state.luna.x, y: state.luna.y }, { x: obj.x, y: obj.y });
   if (!path) {
     appendChatLine("System", "（経路が見つかりませんでした…新しいマップを生成してみてください）");
-    state.lastActionResult = `${obj.label}への経路探索に失敗した`;
-    remember(state.lastActionResult);
+    setActionResult({ type: "path_failed", success: false, target: obj.label, summary: `${obj.label}への経路探索に失敗した` });
     return;
   }
   state.luna.path = path;
@@ -432,7 +436,7 @@ function trySetGoal(targetType) {
   state.luna.currentGoalType = targetType;
   state.luna.targetObject = obj;
   state.status = "moving";
-  state.lastActionResult = `${obj.label}へ向かい始めた`;
+  setActionResult({ type: "action_started", success: true, target: obj.label, summary: `${obj.label}へ向かい始めた` });
   appendChatLine("System", `（Lunaが${obj.label}${obj.emoji}に向かって歩き出しました）`);
 }
 
@@ -483,12 +487,11 @@ function applyObjectEffect(character, characterLabel, obj) {
     if (character === state.luna) showLunaSpeech(`${obj.label}${obj.emoji} 見つけた！`);
     if (character === state.luna) {
       changeAffinity(1);
-      remember(`${obj.label}を見つけた`);
     }
   }
   if (obj.found) {
     gainExperience(character, characterLabel, obj.type === "enemy" ? 30 : 8);
-    state.lastActionResult = `${characterLabel}が${obj.label}を解決した`;
+    setActionResult({ type: "interaction_completed", success: true, actor: characterLabel, target: obj.label, summary: `${characterLabel}が${obj.label}を解決した` }, character === state.luna ? `${obj.label}を見つけた` : null);
   }
 }
 
@@ -552,8 +555,7 @@ function updateFieldEffects() {
         createFieldEffect(obj.x, obj.y, "#ff8ac2", "burst");
         if (obj.hp === 0) {
           obj.found = true;
-          state.lastActionResult = "持続魔法で敵を倒した";
-          remember(state.lastActionResult);
+          setActionResult({ type: "enemy_defeated", success: true, actor: "持続魔法", summary: "持続魔法で敵を倒した" }, "持続魔法で敵を倒した");
           appendChatLine("Magic", "🌩️ 持続魔法が敵を倒した！");
         }
       }
@@ -577,8 +579,7 @@ function castSpell(caster, casterLabel) {
     if (target.hp === 0) {
       target.found = true;
       gainExperience(caster, casterLabel, 35);
-      state.lastActionResult = `${casterLabel}が魔法で敵を倒した`;
-      if (caster === state.luna) remember(state.lastActionResult);
+      setActionResult({ type: "enemy_defeated", success: true, actor: casterLabel, summary: `${casterLabel}が魔法で敵を倒した` }, caster === state.luna ? `${casterLabel}が魔法で敵を倒した` : null);
     }
     createFieldEffect(target.x, target.y, "#ff8ac2");
     appendChatLine("Magic", `✨ ${casterLabel}が魔法を放ち、${target.label}に20ダメージ！`);
@@ -608,7 +609,7 @@ function startBattle(attacker, attackerLabel, enemyObj) {
     appendChatLine("Battle", `🏆 ${attackerLabel}が${enemyObj.label}を倒した！`);
     enemyObj.found = true;
     gainExperience(attacker, attackerLabel, 35);
-    state.lastActionResult = `${attackerLabel}が敵を倒した`;
+    setActionResult({ type: "enemy_defeated", success: true, actor: attackerLabel, summary: `${attackerLabel}が敵を倒した` }, attacker === state.luna ? `${attackerLabel}が敵を倒した` : null);
     if (attacker === state.luna) showLunaSpeech("倒した！");
   } else if (attacker.hp <= 0) {
     appendChatLine("Battle", `💀 ${attackerLabel}は力尽きてしまった…（HPを1で持ちこたえた）`);
@@ -1002,6 +1003,7 @@ function buildLunaContext() {
     affinity: state.relationship.affinity,
     memories: state.relationship.memories.slice(-8),
     lastResult: state.lastActionResult,
+    reason: state.lastDecisionReason,
   };
 }
 
@@ -1022,8 +1024,7 @@ async function requestAutonomousAction() {
         appendChatLine("Luna", data.reply);
       }
       if (data.reason) {
-        state.lastActionResult = `Lunaの判断: ${data.reason}`;
-        remember(state.lastActionResult);
+        state.lastDecisionReason = data.reason;
       }
       if (data.target) trySetGoal(data.target);
       if (data.spell) castLunaSpell();
@@ -1097,7 +1098,7 @@ async function sendChatMessage(message) {
   if (!message) return;
   appendChatLine("You", message);
   changeAffinity(2);
-  remember(`あなたが「${message.slice(0, 30)}」と話しかけた`);
+  recordObservation({ type: "conversation", speaker: "You", summary: message.slice(0, 80) });
 
   try {
     const response = await fetch(CHAT_API_URL, {
@@ -1114,7 +1115,7 @@ async function sendChatMessage(message) {
 
     showLunaSpeech(data.reply);
     appendChatLine("Luna", data.reply);
-    remember(`Lunaと会話した: ${data.reply.slice(0, 40)}`);
+    recordObservation({ type: "conversation", speaker: "Luna", summary: data.reply.slice(0, 80) });
 
     if (data.target) trySetGoal(data.target);
   } catch (err) {
@@ -1229,7 +1230,8 @@ function advanceArea(direction = "next") {
     return;
   }
   const entrySide = direction === "next" ? "left" : "right";
-  remember(`${AREA_CONFIG[state.areaIndex].name}から${AREA_CONFIG[nextAreaIndex].name}へ${direction === "next" ? "進んだ" : "戻った"}`);
+  const transitionMemory = `${AREA_CONFIG[state.areaIndex].name}から${AREA_CONFIG[nextAreaIndex].name}へ${direction === "next" ? "進んだ" : "戻った"}`;
+  setActionResult({ type: "area_transition", success: true, summary: transitionMemory }, transitionMemory);
   changeAffinity(3);
   state = createGameState(state.relationship, nextAreaIndex, entrySide, { luna: state.luna, player: state.player });
   appendChatLine("System", `（${AREA_CONFIG[nextAreaIndex].name}へ進みました）`);
