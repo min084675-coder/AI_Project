@@ -9,6 +9,7 @@ Lunaとの会話ロジックをまとめたモジュール。
 
 import requests
 import os
+import json
 
 
 class LunaChat:
@@ -88,6 +89,63 @@ class LunaChat:
     def history(self):
         """現在の会話履歴（system含む）をそのまま返す"""
         return self.messages
+
+    # ---------- 発言後に「指示だったかどうか」をモデル自身に判定させる ----------
+    def send_with_intent(self, user_message: str) -> dict:
+        """通常の会話応答を生成したうえで、続けて
+        『ユーザーの発言はLunaにリンゴを取りに行くよう頼んだものか』を
+        モデル自身に分類させる。会話履歴（self.messages）には影響しない。
+
+        戻り値: {"reply": str, "fetch_apple": bool}
+        """
+        reply = self.send(user_message)
+        fetch_apple = self._classify_fetch_intent(user_message, reply)
+        return {"reply": reply, "fetch_apple": fetch_apple}
+
+    def _classify_fetch_intent(self, user_message: str, luna_reply: str) -> bool:
+        """一回限りの分類リクエスト。会話の主履歴とは別に送る。"""
+        classification_messages = [
+            {
+                "role": "system",
+                "content": (
+                    "あなたは分類器です。会話の文脈から、直前のユーザーの発言が"
+                    "「Lunaにリンゴを取りに行くよう頼んでいる／指示している」かどうかを判定してください。"
+                    "出力はJSONのみで、他の文章は一切含めないでください。"
+                    '出力形式: {"fetch_apple": true} または {"fetch_apple": false}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"ユーザーの発言: {user_message}\nLunaの返答: {luna_reply}",
+            },
+        ]
+
+        try:
+            response = requests.post(
+                self.api_url,
+                json={
+                    "model": self.model,
+                    "messages": classification_messages,
+                    "temperature": 0,
+                    "stream": False,
+                },
+            )
+            if not response.ok:
+                return False
+
+            data = response.json()
+            content = data["choices"][0]["message"]["content"].strip()
+
+            # モデルが ```json ... ``` のようにコードフェンス付きで返すことがあるので取り除く
+            if content.startswith("```"):
+                content = content.strip("`")
+                content = content.replace("json", "", 1).strip()
+
+            parsed = json.loads(content)
+            return bool(parsed.get("fetch_apple", False))
+        except Exception:
+            # 分類に失敗した場合は「指示ではなかった」扱いにして、安全側に倒す
+            return False
 
 
 # ---------- CLIとして直接実行した場合のみ動く ----------

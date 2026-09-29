@@ -54,7 +54,7 @@
     font-weight: bold;
     color: #7fd3ff;
   }
-  #chatForm {
+  #chatControls {
     display: flex;
     gap: 8px;
   }
@@ -67,7 +67,7 @@
     color: #eee;
     font-size: 14px;
   }
-  #chatForm button {
+  #chatSendBtn {
     padding: 8px 16px;
     border-radius: 6px;
     border: none;
@@ -76,12 +76,13 @@
     font-weight: bold;
     cursor: pointer;
   }
-  #chatForm button:hover {
+  #chatSendBtn:hover {
     background: #a3e0ff;
   }
   #serverNote {
     font-size: 12px;
     color: #777;
+    line-height: 1.6;
   }
 </style>
 </head>
@@ -92,11 +93,15 @@
 
   <div id="chatPanel">
     <div id="chatLog"></div>
-    <form id="chatForm">
+    <div id="chatControls">
       <input id="chatInput" type="text" placeholder="Lunaに話しかける..." autocomplete="off" />
-      <button type="submit">送信</button>
-    </form>
-    <div id="serverNote">※ server.py (python server.py) を起動していないとLunaは返事をできません</div>
+      <button id="chatSendBtn" type="button">送信</button>
+    </div>
+    <div id="serverNote">
+      ※ server.py (python server.py) を起動していないとLunaは返事をできません<br>
+      ※「リンゴ取ってきて」のように頼むとLunaが判断して歩き始めます<br>
+      ※ 自分のアバター(You)は 矢印キー / WASD で操作できます
+    </div>
   </div>
 
   <script src="game.js"></script>

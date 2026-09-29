@@ -1,0 +1,16 @@
+Lunaがリンゴを取りに行くという使命が最初からあるから真っ先に取りに行っちゃう。やり取りしながら取りに行くようにする
+Lunaに送信しようとしたらリセットされる
+Luna以外にも自分のアバターも生成
+
+ゲームの基盤は作られているけど方向性がちょっとずれているから修正して
+
+
+
+起動コマンド
+Start-Process python -ArgumentList "-m http.server 8000"
+Start-Process python -ArgumentList "server.py"
+
+
+
+
+AIモデルがしゃべりだしてから(テキストを出してから)動き出すかどうか判断する方がよさそう

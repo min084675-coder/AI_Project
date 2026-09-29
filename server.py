@@ -1,13 +1,13 @@
 """
 server.py
-luna.py ‚Ì LunaChat ‚ğ HTTP API ‚Æ‚µ‚ÄŒöŠJ‚·‚éƒT[ƒo[B
-ƒuƒ‰ƒEƒUã‚ÌƒQ[ƒ€iindex.html / game.jsj‚©‚ç fetch ‚ÅŒÄ‚Ño‚¹‚é‚æ‚¤‚É‚·‚éB
+luna.py ã® LunaChat ã‚’ HTTP API ã¨ã—ã¦å…¬é–‹ã™ã‚‹ã‚µãƒ¼ãƒãƒ¼ã€‚
+ãƒ–ãƒ©ã‚¦ã‚¶ä¸Šã®ã‚²ãƒ¼ãƒ ï¼ˆindex.html / game.jsï¼‰ã‹ã‚‰ fetch ã§å‘¼ã³å‡ºã›ã‚‹ã‚ˆã†ã«ã™ã‚‹ã€‚
 
-‹N“®•û–@:
+èµ·å‹•æ–¹æ³•:
     pip install flask requests
     python server.py
 
-ƒfƒtƒHƒ‹ƒg‚Å http://localhost:5000 ‚Å‘Ò‚¿ó‚¯‚éB
+ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆã§ http://localhost:5000 ã§å¾…ã¡å—ã‘ã‚‹ã€‚
 """
 
 from flask import Flask, request, jsonify
@@ -15,13 +15,13 @@ from luna import LunaChat
 
 app = Flask(__name__)
 
-# ƒQ[ƒ€‚Æ“¯‚ÉLM Studio‚ğg‚¤‘z’èB•K—v‚É‰‚¶‚Äˆø”‚ğ’²®‚µ‚Ä‚­‚¾‚³‚¢B
+# ã‚²ãƒ¼ãƒ ã¨åŒæ™‚ã«LM Studioã‚’ä½¿ã†æƒ³å®šã€‚å¿…è¦ã«å¿œã˜ã¦å¼•æ•°ã‚’èª¿æ•´ã—ã¦ãã ã•ã„ã€‚
 luna = LunaChat()
 
 
-# ---------- CORS‘Î‰ ----------
-# index.html‚ğfile://‚Å’¼ÚŠJ‚¢‚½‚èA•Êƒ|[ƒg‚ÌŠÈˆÕƒT[ƒo[‚Å”zM‚µ‚½‚è‚·‚éê‡A
-# ƒuƒ‰ƒEƒU‘¤‚ÌOrigin§ŒÀ‚Éˆø‚Á‚©‚©‚é‚½‚ßA‘SƒŠƒNƒGƒXƒg‚ÉCORSƒwƒbƒ_[‚ğ•t—^‚·‚éB
+# ---------- CORSå¯¾å¿œ ----------
+# index.htmlã‚’file://ã§ç›´æ¥é–‹ã„ãŸã‚Šã€åˆ¥ãƒãƒ¼ãƒˆã®ç°¡æ˜“ã‚µãƒ¼ãƒãƒ¼ã§é…ä¿¡ã—ãŸã‚Šã™ã‚‹å ´åˆã€
+# ãƒ–ãƒ©ã‚¦ã‚¶å´ã®Originåˆ¶é™ã«å¼•ã£ã‹ã‹ã‚‹ãŸã‚ã€å…¨ãƒªã‚¯ã‚¨ã‚¹ãƒˆã«CORSãƒ˜ãƒƒãƒ€ãƒ¼ã‚’ä»˜ä¸ã™ã‚‹ã€‚
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -32,7 +32,7 @@ def add_cors_headers(response):
 
 @app.route("/chat", methods=["POST", "OPTIONS"])
 def chat():
-    # ƒuƒ‰ƒEƒU‚ª‘—‚éƒvƒŠƒtƒ‰ƒCƒgƒŠƒNƒGƒXƒg(OPTIONS)‚É‚Í‹ó‚Å200‚ğ•Ô‚·
+    # ãƒ–ãƒ©ã‚¦ã‚¶ãŒé€ã‚‹ãƒ—ãƒªãƒ•ãƒ©ã‚¤ãƒˆãƒªã‚¯ã‚¨ã‚¹ãƒˆ(OPTIONS)ã«ã¯ç©ºã§200ã‚’è¿”ã™
     if request.method == "OPTIONS":
         return "", 200
 
@@ -40,11 +40,11 @@ def chat():
     user_message = body.get("message", "").strip()
 
     if not user_message:
-        return jsonify({"error": "message ‚ª‹ó‚Å‚·"}), 400
+        return jsonify({"error": "message ãŒç©ºã§ã™"}), 400
 
     try:
-        reply = luna.send(user_message)
-        return jsonify({"reply": reply})
+        result = luna.send_with_intent(user_message)
+        return jsonify(result)  # {"reply": ..., "fetch_apple": true/false}
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
 
@@ -58,5 +58,5 @@ def reset():
 
 
 if __name__ == "__main__":
-    print("Luna APIƒT[ƒo[‚ğ‹N“®‚µ‚Ü‚·: http://localhost:5000")
+    print("Luna APIã‚µãƒ¼ãƒãƒ¼ã‚’èµ·å‹•ã—ã¾ã™: http://localhost:5000")
     app.run(host="0.0.0.0", port=5000, debug=True)
