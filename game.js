@@ -413,6 +413,8 @@ function trySetGoal(targetType) {
   const path = findPath({ x: state.luna.x, y: state.luna.y }, { x: obj.x, y: obj.y });
   if (!path) {
     appendChatLine("System", "（経路が見つかりませんでした…新しいマップを生成してみてください）");
+    state.lastActionResult = `${obj.label}への経路探索に失敗した`;
+    remember(state.lastActionResult);
     return;
   }
   state.luna.path = path;
@@ -540,6 +542,8 @@ function updateFieldEffects() {
         createFieldEffect(obj.x, obj.y, "#ff8ac2", "burst");
         if (obj.hp === 0) {
           obj.found = true;
+          state.lastActionResult = "持続魔法で敵を倒した";
+          remember(state.lastActionResult);
           appendChatLine("Magic", "🌩️ 持続魔法が敵を倒した！");
         }
       }
@@ -563,6 +567,8 @@ function castSpell(caster, casterLabel) {
     if (target.hp === 0) {
       target.found = true;
       gainExperience(caster, casterLabel, 35);
+      state.lastActionResult = `${casterLabel}が魔法で敵を倒した`;
+      if (caster === state.luna) remember(state.lastActionResult);
     }
     createFieldEffect(target.x, target.y, "#ff8ac2");
     appendChatLine("Magic", `✨ ${casterLabel}が魔法を放ち、${target.label}に20ダメージ！`);
@@ -961,29 +967,43 @@ function setInventory(id, items) {
   }
 }
 
+function buildLunaContext() {
+  const remainingObjects = state.objects.filter((obj) => !obj.found);
+  const terrain = Object.fromEntries(Object.keys(OBJECT_TYPES).map((type) => [
+    type,
+    remainingObjects.filter((obj) => obj.type === type).length,
+  ]));
+  return {
+    area: AREA_CONFIG[state.areaIndex].name,
+    status: state.status,
+    terrain,
+    remaining: remainingObjects.map((obj) => obj.label),
+    nearby: remainingObjects.filter((obj) => isPointVisible(obj)).map((obj) => obj.label),
+    luna: {
+      hp: state.luna.hp,
+      hpMax: state.luna.hpMax,
+      mp: state.luna.mp,
+      mpMax: state.luna.mpMax,
+      inventory: [...state.luna.inventory],
+      level: state.luna.level,
+      xp: state.luna.xp,
+      xpNext: state.luna.xpNext,
+    },
+    affinity: state.relationship.affinity,
+    memories: state.relationship.memories.slice(-8),
+    lastResult: state.lastActionResult,
+  };
+}
+
 async function requestAutonomousAction() {
   if (state.autonomyBusy || state.status === "moving" || Date.now() - state.lastAutonomyAt < 4000) return;
   state.autonomyBusy = true;
   state.lastAutonomyAt = Date.now();
   try {
-    const remainingObjects = state.objects.filter((obj) => !obj.found);
-    const terrain = Object.fromEntries(Object.keys(OBJECT_TYPES).map((type) => [
-      type,
-      remainingObjects.filter((obj) => obj.type === type).length,
-    ]));
     const response = await fetch(AUTONOMY_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        area: AREA_CONFIG[state.areaIndex].name,
-        status: state.status,
-        terrain,
-        remaining: remainingObjects.map((obj) => obj.label),
-        luna: { hp: state.luna.hp, hpMax: state.luna.hpMax, mp: state.luna.mp, mpMax: state.luna.mpMax, inventory: state.luna.inventory, level: state.luna.level },
-        affinity: state.relationship.affinity,
-        memories: state.relationship.memories.slice(-8),
-        lastResult: state.lastActionResult,
-      }),
+      body: JSON.stringify(buildLunaContext()),
     });
     const data = await response.json();
     if (response.ok) {
@@ -1037,26 +1057,11 @@ async function maybeLunaTalk() {
   if (Date.now() - state.lastLunaTalkAt < 9000) return;
   state.lastLunaTalkAt = Date.now();
   let line = "";
-  const remainingObjects = state.objects.filter((obj) => !obj.found);
-  const terrain = Object.fromEntries(Object.keys(OBJECT_TYPES).map((type) => [
-    type,
-    remainingObjects.filter((obj) => obj.type === type).length,
-  ]));
   try {
     const response = await fetch(PROACTIVE_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        area: AREA_CONFIG[state.areaIndex].name,
-        status: state.status,
-        target: state.luna.targetObject ? state.luna.targetObject.label : null,
-        terrain,
-        luna: { hp: state.luna.hp, hpMax: state.luna.hpMax, mp: state.luna.mp, mpMax: state.luna.mpMax, inventory: state.luna.inventory, level: state.luna.level },
-        affinity: state.relationship.affinity,
-        memories: state.relationship.memories.slice(-6),
-        lastResult: state.lastActionResult,
-        nearby: remainingObjects.filter((obj) => isPointVisible(obj)).map((obj) => obj.label),
-      }),
+      body: JSON.stringify({ ...buildLunaContext(), target: state.luna.targetObject ? state.luna.targetObject.label : null }),
     });
     const data = await response.json();
     if (response.ok) line = data.reply;
@@ -1084,17 +1089,7 @@ async function sendChatMessage(message) {
     const response = await fetch(CHAT_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message,
-        gameContext: {
-          area: AREA_CONFIG[state.areaIndex].name,
-          status: state.status,
-          luna: { hp: state.luna.hp, hpMax: state.luna.hpMax, mp: state.luna.mp, mpMax: state.luna.mpMax, inventory: state.luna.inventory, level: state.luna.level },
-          affinity: state.relationship.affinity,
-          memories: state.relationship.memories.slice(-8),
-          lastResult: state.lastActionResult,
-        },
-      }),
+      body: JSON.stringify({ message, gameContext: buildLunaContext() }),
     });
     const data = await response.json();
 
@@ -1105,6 +1100,7 @@ async function sendChatMessage(message) {
 
     showLunaSpeech(data.reply);
     appendChatLine("Luna", data.reply);
+    remember(`Lunaと会話した: ${data.reply.slice(0, 40)}`);
 
     if (data.target) trySetGoal(data.target);
   } catch (err) {
