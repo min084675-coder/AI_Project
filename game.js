@@ -67,6 +67,8 @@ function remember(event) {
 }
 
 function recordObservation(event) {
+  state.observations.push(event);
+  state.observations = state.observations.slice(-12);
   fetch(OBSERVE_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -75,8 +77,14 @@ function recordObservation(event) {
 }
 
 function setActionResult(result, importantMemory = null) {
-  state.lastActionResult = result;
-  recordObservation(result);
+  state.lastActionResult = {
+    action: result.action || result.type || "game_event",
+    target: result.target || null,
+    success: Boolean(result.success),
+    result: result.result || result.summary || "",
+    details: result.details || {},
+  };
+  recordObservation(state.lastActionResult);
   if (importantMemory) remember(importantMemory);
 }
 
@@ -290,7 +298,7 @@ function createGameState(relationship = loadRelationship(), areaIndex = 0, entry
   const areaPortals = [];
   if (areaIndex > 0) areaPortals.push({ direction: "previous", x: portalSpots[0].x, y: portalSpots[0].y, radius: 24 });
   if (areaIndex < AREA_CONFIG.length - 1) areaPortals.push({ direction: "next", x: portalSpots[1].x, y: portalSpots[1].y, radius: 24 });
-  return { room, walls, grid, luna, player, objects, gates, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", lastActionResult: { type: "area_started", success: true, summary: "新しいエリアを観察中" }, lastDecisionReason: "", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
+  return { room, walls, grid, luna, player, objects, gates, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", observations: [], lastActionResult: { action: "area_started", target: null, success: true, result: "新しいエリアを観察中", details: {} }, lastDecisionReason: "", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
 }
 
 let state = createGameState();
@@ -350,7 +358,12 @@ function getBlockingWalls() {
 
 function checkGateInteractions(character, characterLabel) {
   for (const gate of state.gates) {
-    if (gate.open || !circleRectOverlap(character.x, character.y, character.radius + 4, gate)) continue;
+    if (gate.open) continue;
+    const touching = circleRectOverlap(character.x, character.y, character.radius + 4, gate);
+    if (!touching) {
+      if (character === state.player) gate.warningShown = false;
+      continue;
+    }
     const keyIndex = character.inventory.indexOf("古い鍵");
     if (keyIndex >= 0) {
       character.inventory.splice(keyIndex, 1);
@@ -358,8 +371,9 @@ function checkGateInteractions(character, characterLabel) {
       changeAffinity(character === state.luna ? 2 : 0);
       setActionResult({ type: "gate_unlocked", success: true, actor: characterLabel, summary: "古い鍵でゲートを開けた" }, character === state.luna ? `${characterLabel}が古い鍵でゲートを開けた` : null);
       appendChatLine("System", `🔑 ${characterLabel}が古い鍵でゲートを開けた！`);
-    } else if (character === state.player) {
+    } else if (character === state.player && !gate.warningShown) {
       appendChatLine("System", "🔒 ゲートは閉じている。古い鍵が必要です。");
+      gate.warningShown = true;
     }
   }
 }
@@ -423,6 +437,7 @@ function trySetGoal(targetType) {
   const obj = findNearestObject(targetType, state.luna);
   if (!obj) {
     appendChatLine("System", `（${OBJECT_TYPES[targetType].label}はもう見当たりません）`);
+    setActionResult({ action: "search", target: OBJECT_TYPES[targetType].label, success: false, result: "対象なし" });
     return;
   }
   const path = findPath({ x: state.luna.x, y: state.luna.y }, { x: obj.x, y: obj.y });
@@ -436,7 +451,7 @@ function trySetGoal(targetType) {
   state.luna.currentGoalType = targetType;
   state.luna.targetObject = obj;
   state.status = "moving";
-  setActionResult({ type: "action_started", success: true, target: obj.label, summary: `${obj.label}へ向かい始めた` });
+  recordObservation({ action: "action_started", target: obj.label, success: true, result: `${obj.label}へ向かい始めた` });
   appendChatLine("System", `（Lunaが${obj.label}${obj.emoji}に向かって歩き出しました）`);
 }
 
@@ -489,7 +504,7 @@ function applyObjectEffect(character, characterLabel, obj) {
       changeAffinity(1);
     }
   }
-  if (obj.found) {
+  if (obj.found && obj.type !== "enemy") {
     gainExperience(character, characterLabel, obj.type === "enemy" ? 30 : 8);
     setActionResult({ type: "interaction_completed", success: true, actor: characterLabel, target: obj.label, summary: `${characterLabel}が${obj.label}を解決した` }, character === state.luna ? `${obj.label}を見つけた` : null);
   }
@@ -503,6 +518,7 @@ function useItem(character, characterLabel, item) {
   const itemIndex = character.inventory.indexOf(item);
   if (itemIndex < 0) {
     appendChatLine("System", `${characterLabel}の持ち物に「${item}」はありません。`);
+    if (character === state.luna) setActionResult({ action: "use_item", target: item, success: false, result: "所持していない" });
     return false;
   }
 
@@ -518,6 +534,7 @@ function useItem(character, characterLabel, item) {
     createFieldEffect(character.x, character.y, "#b58cff", "rune");
     appendChatLine("Magic", `🔮 ${characterLabel}が謎の宝石を砕き、魔法陣を展開した！ MPが${restored}回復。`);
     if (defeated.length > 0) appendChatLine("Magic", `魔法の波動が近くの敵${defeated.length}体を包み込んだ。`);
+    if (character === state.luna) setActionResult({ action: "use_item", target: item, success: true, result: "謎の宝石を使用した", details: { restoredMp: restored, enemiesHit: defeated.length } });
     return true;
   }
 
@@ -537,10 +554,12 @@ function castPersistentSpell(caster, casterLabel) {
   const spellCost = 20;
   if (caster.mp < spellCost) {
     appendChatLine("Magic", `${casterLabel}のMPが足りない…`);
+    if (caster === state.luna) setActionResult({ action: "persistent_spell", target: "持続魔法", success: false, result: "MP不足", details: { required: spellCost, current: caster.mp } });
     return;
   }
   caster.mp -= spellCost;
   state.fieldEffects.push({ x: caster.x, y: caster.y, color: "#ff8ac2", type: "storm", age: 0, duration: 360, radius: 110, lastDamageAt: -30 });
+  if (caster === state.luna) setActionResult({ action: "persistent_spell", target: "持続魔法", success: true, result: "持続魔法をフィールドへ設置した" });
   appendChatLine("Magic", `🌩️ ${casterLabel}が持続魔法をフィールドに残した！`);
 }
 
@@ -567,6 +586,7 @@ function castSpell(caster, casterLabel) {
   const spellCost = 15;
   if (caster.mp < spellCost) {
     appendChatLine("Magic", `${casterLabel}のMPが足りない…`);
+    if (caster === state.luna) setActionResult({ action: "spell", target: "魔法", success: false, result: "MP不足", details: { required: spellCost, current: caster.mp } });
     return;
   }
   caster.mp -= spellCost;
@@ -584,6 +604,7 @@ function castSpell(caster, casterLabel) {
     createFieldEffect(target.x, target.y, "#ff8ac2");
     appendChatLine("Magic", `✨ ${casterLabel}が魔法を放ち、${target.label}に20ダメージ！`);
   } else {
+    if (caster === state.luna) setActionResult({ action: "spell", target: "魔法", success: true, result: "魔法を発動したが対象なし" });
     appendChatLine("Magic", `✨ ${casterLabel}が静かな魔法をフィールドに放った。`);
   }
 }
@@ -614,8 +635,10 @@ function startBattle(attacker, attackerLabel, enemyObj) {
   } else if (attacker.hp <= 0) {
     appendChatLine("Battle", `💀 ${attackerLabel}は力尽きてしまった…（HPを1で持ちこたえた）`);
     attacker.hp = 1;
+    setActionResult({ action: "battle", target: enemyObj.label, success: false, result: "戦闘で力尽きた", details: { hp: attacker.hp } });
   } else {
     appendChatLine("Battle", `${attackerLabel}は${enemyObj.label}との戦闘から離脱した。`);
+    setActionResult({ action: "battle", target: enemyObj.label, success: false, result: "戦闘から離脱した" });
   }
 }
 
@@ -1001,6 +1024,7 @@ function buildLunaContext() {
       xpNext: state.luna.xpNext,
     },
     affinity: state.relationship.affinity,
+    observations: state.observations.slice(-8),
     memories: state.relationship.memories.slice(-8),
     lastResult: state.lastActionResult,
     reason: state.lastDecisionReason,
@@ -1048,6 +1072,7 @@ function runLocalAutonomy() {
   }
   const nextTarget = state.luna.hp < 70 ? "apple" : state.luna.mp < 25 ? "water" : "treasure";
   if (findNearestObject(nextTarget, state.luna)) trySetGoal(nextTarget);
+  else setActionResult({ action: "search", target: nextTarget, success: false, result: "候補が見つからない" });
 }
 
 // ---------- メインループ ----------
