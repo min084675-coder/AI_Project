@@ -216,7 +216,7 @@ function pickDistinctSpots(room, grid, reachableFromLuna, lunaStart, playerStart
 
 // ---------- キャラクターの初期ステータス ----------
 function createCharacterStats() {
-  return { hp: 100, hpMax: 100, mp: 50, mpMax: 50, inventory: [], level: 1, xp: 0, xpNext: 100 };
+  return { hp: 100, hpMax: 100, mp: 50, mpMax: 50, inventory: [], level: 1, xp: 0, xpNext: 100, defenseBuff: 0 };
 }
 
 function gainExperience(character, characterLabel, amount) {
@@ -538,6 +538,14 @@ function useItem(character, characterLabel, item) {
     return true;
   }
 
+  if (item === "防具の欠片") {
+    character.inventory.splice(itemIndex, 1);
+    character.defenseBuff = (character.defenseBuff || 0) + 1;
+    appendChatLine("System", `🛡 ${characterLabel}は防具の欠片を使った。次の戦闘でダメージが軽減される！`);
+    if (character === state.luna) setActionResult({ action: "use_item", target: item, success: true, result: "防具の欠片を使用した" });
+    return true;
+  }
+
   appendChatLine("System", `「${item}」はまだ使い道がありません。`);
   return false;
 }
@@ -613,11 +621,15 @@ function castSpell(caster, casterLabel) {
 function startBattle(attacker, attackerLabel, enemyObj) {
   appendChatLine("Battle", `⚔ ${attackerLabel} が ${enemyObj.label}${enemyObj.emoji} と戦闘開始！`);
 
+  const defended = attacker.defenseBuff > 0;
+  if (defended) appendChatLine("Battle", `🛡 防具の効果でダメージが軽減される！`);
+
   let turn = 0;
   while (enemyObj.hp > 0 && attacker.hp > 0 && turn < 20) {
     turn++;
     const dmgToEnemy = randomInt(8, 16);
-    const dmgToAttacker = randomInt(4, 10);
+    let dmgToAttacker = randomInt(4, 10);
+    if (defended) dmgToAttacker = Math.ceil(dmgToAttacker / 2);
     enemyObj.hp = Math.max(0, enemyObj.hp - dmgToEnemy);
     attacker.hp = Math.max(0, attacker.hp - dmgToAttacker);
     appendChatLine(
@@ -625,6 +637,8 @@ function startBattle(attacker, attackerLabel, enemyObj) {
       `ターン${turn}: ${attackerLabel}の攻撃で${dmgToEnemy}ダメージ(敵残りHP ${enemyObj.hp}) / 反撃で${attackerLabel}に${dmgToAttacker}ダメージ(HP ${attacker.hp})`
     );
   }
+
+  if (defended) attacker.defenseBuff = Math.max(0, attacker.defenseBuff - 1);
 
   if (enemyObj.hp <= 0) {
     appendChatLine("Battle", `🏆 ${attackerLabel}が${enemyObj.label}を倒した！`);
@@ -997,6 +1011,14 @@ function setInventory(id, items) {
     button.className = "use-item-btn";
     button.textContent = "🔮 使う";
     button.addEventListener("click", () => useItem(id === "lunaInventory" ? state.luna : state.player, id === "lunaInventory" ? "Luna" : "You", "謎の宝石"));
+    el.appendChild(button);
+  }
+  if (items.includes("防具の欠片")) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "use-item-btn";
+    button.textContent = "🛡 使う";
+    button.addEventListener("click", () => useItem(id === "lunaInventory" ? state.luna : state.player, id === "lunaInventory" ? "Luna" : "You", "防具の欠片"));
     el.appendChild(button);
   }
 }
