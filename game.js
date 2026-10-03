@@ -667,21 +667,44 @@ function checkObjectInteractions(character, characterLabel) {
 
 function updateEnemies() {
   for (const enemy of state.objects.filter((obj) => obj.type === "enemy" && !obj.found)) {
-    const distance = Math.hypot(enemy.x - state.player.x, enemy.y - state.player.y);
-    const canAttack = isPointVisible(enemy) && distance <= 360;
-    if (canAttack && distance > enemy.radius + state.player.radius + 4) {
-      enemy.x += ((state.player.x - enemy.x) / distance) * 1.05;
-      enemy.y += ((state.player.y - enemy.y) / distance) * 1.05;
+    // プレイヤーとLunaの両方を候補にして、視界に入っていて一番近い方を狙う
+    const candidates = [
+      { character: state.player, label: "You" },
+      { character: state.luna, label: "Luna" },
+    ]
+      .map(({ character, label }) => ({
+        character,
+        label,
+        distance: Math.hypot(enemy.x - character.x, enemy.y - character.y),
+        visible: isPointVisible(character),
+      }))
+      .filter((c) => c.visible && c.distance <= 360)
+      .sort((a, b) => a.distance - b.distance);
+
+    const target = candidates[0];
+
+    if (target && target.distance > enemy.radius + target.character.radius + 4) {
+      // 追跡
+      enemy.x += ((target.character.x - enemy.x) / target.distance) * 1.05;
+      enemy.y += ((target.character.y - enemy.y) / target.distance) * 1.05;
       resolveWallCollisions(enemy, getBlockingWalls());
       clampToRoom(enemy, state.room);
-    } else if (canAttack) {
+    } else if (target) {
+      // 攻撃
       enemy.lastAttackAt = enemy.lastAttackAt || 0;
       if (Date.now() - enemy.lastAttackAt > 1200) {
         enemy.lastAttackAt = Date.now();
-        state.player.hp = Math.max(1, state.player.hp - 5);
-        appendChatLine("Battle", `👾 敵がYouを襲い、5ダメージ！ (HP ${state.player.hp})`);
+        target.character.hp = Math.max(1, target.character.hp - 5);
+        appendChatLine("Battle", `👾 敵が${target.label}を襲い、5ダメージ！ (HP ${target.character.hp})`);
+        if (target.character === state.luna) {
+          setActionResult(
+            { type: "enemy_attack", success: false, actor: "敵", summary: "敵に襲われてダメージを受けた" },
+            "敵に襲われてダメージを受けた"
+          );
+        }
       }
     } else {
+      // 誰も視界にいない場合はうろつく
       enemy.wanderTimer -= 1;
       if (!enemy.wanderTarget || enemy.wanderTimer <= 0 || Math.hypot(enemy.x - enemy.wanderTarget.x, enemy.y - enemy.wanderTarget.y) < 12) {
         enemy.wanderTarget = {
