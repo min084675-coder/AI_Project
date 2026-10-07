@@ -45,7 +45,14 @@ def chat():
 
     try:
         result = luna.send_with_intent(user_message, game_context)
-        return jsonify(result)  # {"reply": ..., "target": "apple"/"water"/"treasure"/"enemy"/None}
+        action = result.get("action")
+        return jsonify({
+            "reply": result.get("reply", ""),
+            "action": action,
+            "reason": result.get("reason", ""),
+            "target": action if action in luna.TARGET_CATEGORIES else None,
+            "spell": action == "spell",
+        })
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
 
