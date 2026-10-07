@@ -27,16 +27,103 @@ const OBJECT_COUNTS = { apple: 2, water: 2, treasure: 2, enemy: 2 };
 const ITEM_POOL = ["ポーション", "エーテル", "古い鍵", "謎の宝石", "防具の欠片"];
 const AUTONOMY_API_URL = "http://localhost:5000/autonomy";
 let visibilityEnabled = true;
+const PLAYER_FOV = Math.PI * 0.66;
+const LUNA_FOV = Math.PI * 0.66;
+const ENEMY_FOV = Math.PI * 0.58;
+const VISION_RANGE = 360;
 const RELATIONSHIP_STORAGE_KEY = "lunaRelationship";
 const GAME_DATA_STORAGE_KEY = "lunaGameData";
 const AREA_CONFIG = [
   { name: "月影の広間", color: "#3a3a4d" },
-  { name: "青い遺跡", color: "#263f52" },
+  { name: "青い遺跡の町", color: "#263f52" },
   { name: "星降る庭", color: "#403452" },
 ];
+const MAP_EDITOR_STORAGE_KEY = "lunaMapTemplate";
+const mapEditor = { enabled: false, tool: "wall", wallStart: null };
 
 function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function editorCanvasPoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - rect.left) * canvas.width / rect.width,
+    y: (event.clientY - rect.top) * canvas.height / rect.height,
+  };
+}
+
+function editorSnap(value) {
+  return Math.round(value / CELL_SIZE) * CELL_SIZE;
+}
+
+function createEditorObject(type, point) {
+  const definitions = {
+    apple: ["リンゴ", "🍎", 12],
+    water: ["水", "💧", 12],
+    treasure: ["宝箱", "🎁", 14],
+    enemy: ["敵", "👾", 14],
+  };
+  const [label, emoji, radius] = definitions[type] || [type, "?", 14];
+  return { id: `editor_${type}_${Date.now()}`, type, label, emoji, radius, x: point.x, y: point.y, found: false, hp: type === "enemy" ? 35 : undefined, wanderTarget: null, wanderTimer: 60 };
+}
+
+function editorErase(point) {
+  const objectIndex = state.objects.findIndex((object) => Math.hypot(object.x - point.x, object.y - point.y) < 30);
+  if (objectIndex >= 0) { state.objects.splice(objectIndex, 1); return; }
+  const fieldIndex = state.fieldObjects.findIndex((object) => Math.hypot(object.x - point.x, object.y - point.y) < 35);
+  if (fieldIndex >= 0) { state.fieldObjects.splice(fieldIndex, 1); return; }
+  const gateIndex = state.gates.findIndex((gate) => circleRectOverlap(point.x, point.y, 25, gate));
+  if (gateIndex >= 0) { state.gates.splice(gateIndex, 1); return; }
+  const wallIndex = state.walls.findIndex((wall) => circleRectOverlap(point.x, point.y, 25, wall));
+  if (wallIndex >= 0) state.walls.splice(wallIndex, 1);
+}
+
+function handleEditorCanvasClick(event) {
+  if (!mapEditor.enabled) return;
+  const point = editorCanvasPoint(event);
+  const tool = mapEditor.tool;
+  if (tool === "erase") { editorErase(point); return; }
+  if (tool === "wall") {
+    if (!mapEditor.wallStart) { mapEditor.wallStart = { x: editorSnap(point.x), y: editorSnap(point.y) }; return; }
+    const end = { x: editorSnap(point.x), y: editorSnap(point.y) };
+    const x = Math.min(mapEditor.wallStart.x, end.x);
+    const y = Math.min(mapEditor.wallStart.y, end.y);
+    state.walls.push({ x, y, width: Math.max(CELL_SIZE, Math.abs(end.x - mapEditor.wallStart.x)), height: Math.max(CELL_SIZE, Math.abs(end.y - mapEditor.wallStart.y)), color: "#5b5b73" });
+    mapEditor.wallStart = null;
+    return;
+  }
+  if (tool === "gate") {
+    state.gates.push({ x: point.x - 10, y: point.y - 60, width: 20, height: 120, open: false, keyType: "古い鍵" });
+    return;
+  }
+  const fieldTypes = { town: "町", house: "家", npc: "住人", switch: "スイッチ", healing: "回復地点", trap: "罠" };
+  if (fieldTypes[tool]) {
+    state.fieldObjects.push({ id: `editor_${tool}_${Date.now()}`, type: tool, x: point.x, y: point.y, radius: 20, label: fieldTypes[tool], emoji: tool === "town" ? "🏘️" : tool === "house" ? "🏠" : tool === "npc" ? "🧑‍🌾" : tool === "healing" ? "⛲" : tool === "trap" ? "⚠️" : "🔘", visited: false, talked: false, used: false, active: false, triggered: false, lastUsedAt: 0 });
+    return;
+  }
+  state.objects.push(createEditorObject(tool, point));
+}
+
+function getMapTemplate() {
+  return { walls: state.walls, gates: state.gates, objects: state.objects, fieldObjects: state.fieldObjects, areaIndex: state.areaIndex };
+}
+
+function saveMapTemplate() {
+  localStorage.setItem(MAP_EDITOR_STORAGE_KEY, JSON.stringify(getMapTemplate()));
+  appendChatLine("System", "🛠️ マップテンプレートを保存しました。");
+}
+
+function loadMapTemplate() {
+  try {
+    const template = JSON.parse(localStorage.getItem(MAP_EDITOR_STORAGE_KEY) || "null");
+    if (!template) { appendChatLine("System", "保存されたマップテンプレートがありません。"); return; }
+    state.walls = template.walls || state.walls;
+    state.gates = template.gates || state.gates;
+    state.objects = template.objects || state.objects;
+    state.fieldObjects = template.fieldObjects || state.fieldObjects;
+    appendChatLine("System", "🛠️ マップテンプレートを読み込みました。");
+  } catch (error) { appendChatLine("System", "マップテンプレートを読み込めませんでした。"); }
 }
 
 function loadRelationship() {
@@ -216,7 +303,7 @@ function pickDistinctSpots(room, grid, reachableFromLuna, lunaStart, playerStart
 
 // ---------- キャラクターの初期ステータス ----------
 function createCharacterStats() {
-  return { hp: 100, hpMax: 100, mp: 50, mpMax: 50, inventory: [], level: 1, xp: 0, xpNext: 100, defenseBuff: 0 };
+  return { hp: 100, hpMax: 100, mp: 50, mpMax: 50, inventory: [], level: 1, xp: 0, xpNext: 100, defenseBuff: 0, downed: false };
 }
 
 function gainExperience(character, characterLabel, amount) {
@@ -255,12 +342,14 @@ function createGameState(relationship = loadRelationship(), areaIndex = 0, entry
     found: false,
     reward: type === "treasure" && i === 4 ? "謎の宝石" : type === "treasure" && i === 5 ? "古い鍵" : undefined,
     hp: type === "enemy" ? randomInt(25, 45) : undefined,
+    facingAngle: randomInt(0, 359) * Math.PI / 180,
     wanderTarget: null,
     wanderTimer: randomInt(30, 150),
   }));
 
   const luna = {
     x: lunaStart.x, y: lunaStart.y, radius: 16, speed: 1.8, color: "#7fd3ff",
+    facingAngle: Math.atan2(playerStart.y - lunaStart.y, playerStart.x - lunaStart.x),
     speechText: "", speechTimer: null,
     path: null, pathIndex: 0, currentGoalType: null, targetObject: null,
     ...createCharacterStats(),
@@ -268,6 +357,7 @@ function createGameState(relationship = loadRelationship(), areaIndex = 0, entry
 
   const player = {
     x: playerStart.x, y: playerStart.y, radius: 16, speed: 3, color: "#8affa0",
+    facingAngle: Math.atan2(lunaStart.y - playerStart.y, lunaStart.x - playerStart.x),
     ...createCharacterStats(),
   };
 
@@ -293,12 +383,18 @@ function createGameState(relationship = loadRelationship(), areaIndex = 0, entry
     luna.currentGoalType = null;
   }
 
+  const fieldSpots = pickDistinctSpots(room, grid, reachableFromLuna, lunaStart, playerStart, 3);
   const gates = [{ x: room.x + room.width / 2 - 10, y: room.y + room.height / 2 - 60, width: 20, height: 120, open: false }];
+  const fieldObjects = areaIndex === 1 ? [
+    { id: "town_0", type: "town", x: fieldSpots[0].x, y: fieldSpots[0].y, radius: 28, label: "青い遺跡の町", emoji: "🏘️", visited: false },
+    { id: "house_0", type: "house", x: fieldSpots[1].x, y: fieldSpots[1].y, radius: 22, label: "空き家", emoji: "🏠", lastUsedAt: 0 },
+    { id: "npc_0", type: "npc", x: fieldSpots[2].x, y: fieldSpots[2].y, radius: 16, label: "町の住人", emoji: "🧑‍🌾", talked: false },
+  ] : [];
   const portalSpots = pickDistinctSpots(room, grid, reachableFromLuna, lunaStart, playerStart, 2);
   const areaPortals = [];
   if (areaIndex > 0) areaPortals.push({ direction: "previous", x: portalSpots[0].x, y: portalSpots[0].y, radius: 24 });
   if (areaIndex < AREA_CONFIG.length - 1) areaPortals.push({ direction: "next", x: portalSpots[1].x, y: portalSpots[1].y, radius: 24 });
-  return { room, walls, grid, luna, player, objects, gates, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", observations: [], lastActionResult: { action: "area_started", target: null, success: true, result: "新しいエリアを観察中", details: {} }, lastDecisionReason: "", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
+  return { room, walls, grid, luna, player, objects, gates, fieldObjects, areaPortals, relationship, areaIndex, portalCooldown: 60, status: "waiting", gameOver: false, observations: [], lastActionResult: { action: "area_started", target: null, success: true, result: "新しいエリアを観察中", details: {} }, lastDecisionReason: "", fieldEffects: [], lastAutonomyAt: 0, autonomyBusy: false, lastLunaTalkAt: 0 };
 }
 
 let state = createGameState();
@@ -315,6 +411,7 @@ function movePlayerFromInput(player, speed) {
   if (keysPressed.has("arrowleft") || keysPressed.has("a")) dx -= 1;
   if (keysPressed.has("arrowright") || keysPressed.has("d")) dx += 1;
   if (dx === 0 && dy === 0) return;
+  player.facingAngle = Math.atan2(dy, dx);
   const len = Math.sqrt(dx * dx + dy * dy);
   player.x += (dx / len) * speed;
   player.y += (dy / len) * speed;
@@ -378,9 +475,43 @@ function checkGateInteractions(character, characterLabel) {
   }
 }
 
+function checkFieldObjectInteractions(character, characterLabel) {
+  if (character.downed) return;
+  for (const fieldObject of state.fieldObjects) {
+    if (Math.hypot(character.x - fieldObject.x, character.y - fieldObject.y) > character.radius + fieldObject.radius) continue;
+    if (fieldObject.type === "town" && !fieldObject.visited) {
+      fieldObject.visited = true;
+      setActionResult({ action: "visit_town", target: fieldObject.label, success: true, result: "町を発見した" }, character === state.luna ? "町を発見し、住人の気配を覚えた" : null);
+      appendChatLine("System", `🏘️ ${characterLabel}は${fieldObject.label}を見つけた。`);
+    } else if (fieldObject.type === "house" && Date.now() - fieldObject.lastUsedAt > 10000) {
+      fieldObject.lastUsedAt = Date.now();
+      character.hp = Math.min(character.hpMax, character.hp + 20);
+      character.mp = Math.min(character.mpMax, character.mp + 10);
+      setActionResult({ action: "rest", target: fieldObject.label, success: true, result: "家で休みHP/MPを回復した", details: { hp: character.hp, mp: character.mp } });
+      appendChatLine("System", `🏠 ${characterLabel}は${fieldObject.label}で休んだ。`);
+    } else if (fieldObject.type === "npc" && !fieldObject.talked) {
+      fieldObject.talked = true;
+      changeAffinity(character === state.luna ? 2 : 0);
+      setActionResult({ action: "talk", target: fieldObject.label, success: true, result: "町の住人と交流した" }, character === state.luna ? "町の住人と交流した" : null);
+      appendChatLine("System", `🧑‍🌾 ${characterLabel}は${fieldObject.label}と話した。`);
+    }
+  }
+}
+
 function clampToRoom(entity, room) {
   entity.x = Math.max(room.x + entity.radius, Math.min(room.x + room.width - entity.radius, entity.x));
   entity.y = Math.max(room.y + entity.radius, Math.min(room.y + room.height - entity.radius, entity.y));
+}
+
+function applyDamage(character, amount, reason) {
+  if (state.gameOver || character.downed) return;
+  character.hp = Math.max(0, character.hp - amount);
+  if (character.hp === 0) {
+    character.downed = true;
+    if (character === state.player) state.gameOver = true;
+    setActionResult({ action: "damage", target: character === state.luna ? "Luna" : "You", success: false, result: "HP0で戦闘不能になった", details: { reason } });
+    appendChatLine("Battle", `💀 ${character === state.luna ? "Luna" : "You"}は戦闘不能になった。`);
+  }
 }
 
 // ---------- 経路探索 ----------
@@ -461,6 +592,7 @@ function moveLunaAlongPath(luna, speed) {
   const dx = target.x - luna.x, dy = target.y - luna.y;
   const dist = Math.sqrt(dx * dx + dy * dy);
   if (dist < 4) { luna.pathIndex++; return; }
+  luna.facingAngle = Math.atan2(dy, dx);
   luna.x += (dx / dist) * speed;
   luna.y += (dy / dist) * speed;
 }
@@ -631,7 +763,7 @@ function startBattle(attacker, attackerLabel, enemyObj) {
     let dmgToAttacker = randomInt(4, 10);
     if (defended) dmgToAttacker = Math.ceil(dmgToAttacker / 2);
     enemyObj.hp = Math.max(0, enemyObj.hp - dmgToEnemy);
-    attacker.hp = Math.max(0, attacker.hp - dmgToAttacker);
+    applyDamage(attacker, dmgToAttacker, `${enemyObj.label}の反撃`);
     appendChatLine(
       "Battle",
       `ターン${turn}: ${attackerLabel}の攻撃で${dmgToEnemy}ダメージ(敵残りHP ${enemyObj.hp}) / 反撃で${attackerLabel}に${dmgToAttacker}ダメージ(HP ${attacker.hp})`
@@ -646,9 +778,8 @@ function startBattle(attacker, attackerLabel, enemyObj) {
     gainExperience(attacker, attackerLabel, 35);
     setActionResult({ type: "enemy_defeated", success: true, actor: attackerLabel, summary: `${attackerLabel}が敵を倒した` }, attacker === state.luna ? `${attackerLabel}が敵を倒した` : null);
     if (attacker === state.luna) showLunaSpeech("倒した！");
-  } else if (attacker.hp <= 0) {
+  } else if (attacker.downed) {
     appendChatLine("Battle", `💀 ${attackerLabel}は力尽きてしまった…（HPを1で持ちこたえた）`);
-    attacker.hp = 1;
     setActionResult({ action: "battle", target: enemyObj.label, success: false, result: "戦闘で力尽きた", details: { hp: attacker.hp } });
   } else {
     appendChatLine("Battle", `${attackerLabel}は${enemyObj.label}との戦闘から離脱した。`);
@@ -667,7 +798,7 @@ function checkObjectInteractions(character, characterLabel) {
 
 function updateEnemies() {
   for (const enemy of state.objects.filter((obj) => obj.type === "enemy" && !obj.found)) {
-    // プレイヤーとLunaの両方を候補にして、視界に入っていて一番近い方を狙う
+    // 敵自身の向き・視野・壁越し判定で、見えている対象だけを狙う。
     const candidates = [
       { character: state.player, label: "You" },
       { character: state.luna, label: "Luna" },
@@ -676,15 +807,16 @@ function updateEnemies() {
         character,
         label,
         distance: Math.hypot(enemy.x - character.x, enemy.y - character.y),
-        visible: isPointVisible(character),
+        visible: canSee(enemy, character, ENEMY_FOV, VISION_RANGE),
       }))
-      .filter((c) => c.visible && c.distance <= 360)
+      .filter((c) => c.visible)
       .sort((a, b) => a.distance - b.distance);
 
     const target = candidates[0];
 
     if (target && target.distance > enemy.radius + target.character.radius + 4) {
       // 追跡
+      enemy.facingAngle = Math.atan2(target.character.y - enemy.y, target.character.x - enemy.x);
       enemy.x += ((target.character.x - enemy.x) / target.distance) * 1.05;
       enemy.y += ((target.character.y - enemy.y) / target.distance) * 1.05;
       resolveWallCollisions(enemy, getBlockingWalls());
@@ -694,7 +826,7 @@ function updateEnemies() {
       enemy.lastAttackAt = enemy.lastAttackAt || 0;
       if (Date.now() - enemy.lastAttackAt > 1200) {
         enemy.lastAttackAt = Date.now();
-        target.character.hp = Math.max(1, target.character.hp - 5);
+        applyDamage(target.character, 5, "敵の攻撃");
         appendChatLine("Battle", `👾 敵が${target.label}を襲い、5ダメージ！ (HP ${target.character.hp})`);
         if (target.character === state.luna) {
           setActionResult(
@@ -714,6 +846,7 @@ function updateEnemies() {
         enemy.wanderTimer = randomInt(90, 220);
       }
       const wanderDistance = Math.hypot(enemy.wanderTarget.x - enemy.x, enemy.wanderTarget.y - enemy.y) || 1;
+      enemy.facingAngle = Math.atan2(enemy.wanderTarget.y - enemy.y, enemy.wanderTarget.x - enemy.x);
       enemy.x += ((enemy.wanderTarget.x - enemy.x) / wanderDistance) * 0.35;
       enemy.y += ((enemy.wanderTarget.y - enemy.y) / wanderDistance) * 0.35;
       resolveWallCollisions(enemy, getBlockingWalls());
@@ -724,6 +857,7 @@ function updateEnemies() {
 
 // ---------- 更新処理 ----------
 function update() {
+  if (state.gameOver) return;
   if (state.portalCooldown > 0) state.portalCooldown -= 1;
   movePlayerFromInput(state.player, state.player.speed);
   checkGateInteractions(state.player, "You");
@@ -732,6 +866,7 @@ function update() {
   checkAreaPortalInteractions();
   resolveCharacterCollision(state.player, state.luna);
   checkObjectInteractions(state.player, "You");
+  checkFieldObjectInteractions(state.player, "You");
   updateEnemies();
 
   if (state.status === "moving" && state.luna.targetObject) {
@@ -741,6 +876,7 @@ function update() {
     clampToRoom(state.luna, state.room);
   }
   checkObjectInteractions(state.luna, "Luna");
+  checkFieldObjectInteractions(state.luna, "Luna");
   updateFieldEffects();
   maybeLunaTalk();
   state.fieldEffects = state.fieldEffects.filter((effect) => {
@@ -784,6 +920,18 @@ function drawGates(gates) {
     ctx.strokeRect(gate.x, gate.y, gate.width, gate.height);
     ctx.font = "18px serif";
     ctx.fillText("🔒", gate.x - 2, gate.y - 8);
+  }
+}
+function drawFieldObjects(objects) {
+  for (const object of objects) {
+    const dimmed = visibilityEnabled && !isPointVisible(object);
+    ctx.save();
+    ctx.globalAlpha = dimmed ? 0.22 : 1;
+    ctx.font = "24px serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(object.emoji, object.x, object.y);
+    ctx.restore();
   }
 }
 function drawObjects(objects, visibleOnly = false) {
@@ -836,11 +984,21 @@ function drawCharacter(character, eyeColor = "#222") {
   ctx.arc(character.x, character.y, character.radius, 0, Math.PI * 2);
   ctx.fillStyle = character.color;
   ctx.fill();
+  const facingAngle = Number.isFinite(character.facingAngle) ? character.facingAngle : -Math.PI / 2;
+  const forward = { x: Math.cos(facingAngle), y: Math.sin(facingAngle) };
+  const side = { x: -forward.y, y: forward.x };
   ctx.fillStyle = eyeColor;
-  ctx.beginPath();
-  ctx.arc(character.x - 5, character.y - 3, 2, 0, Math.PI * 2);
-  ctx.arc(character.x + 5, character.y - 3, 2, 0, Math.PI * 2);
-  ctx.fill();
+  for (const sideOffset of [-4, 4]) {
+    ctx.beginPath();
+    ctx.arc(
+      character.x + forward.x * 7 + side.x * sideOffset,
+      character.y + forward.y * 7 + side.y * sideOffset,
+      2,
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+  }
 }
 function drawLabel(character, text) {
   ctx.font = "11px sans-serif";
@@ -893,17 +1051,31 @@ function rayRectDistance(origin, direction, rect) {
   return near >= 0 ? near : far;
 }
 
-function isPointVisible(point) {
-  if (!visibilityEnabled) return true;
-  const dx = point.x - state.player.x;
-  const dy = point.y - state.player.y;
+function canSee(observer, point, fov, maxDistance = VISION_RANGE) {
+  const dx = point.x - observer.x;
+  const dy = point.y - observer.y;
   const distance = Math.hypot(dx, dy);
   if (distance < 1) return true;
+  if (distance > maxDistance) return false;
+
+  const facingAngle = Number.isFinite(observer.facingAngle) ? observer.facingAngle : 0;
+  const targetAngle = Math.atan2(dy, dx);
+  const angleDifference = Math.atan2(
+    Math.sin(targetAngle - facingAngle),
+    Math.cos(targetAngle - facingAngle)
+  );
+  if (Math.abs(angleDifference) > fov / 2) return false;
+
   const direction = { x: dx / distance, y: dy / distance };
   return !getBlockingWalls().some((wall) => {
-    const wallDistance = rayRectDistance(state.player, direction, wall);
+    const wallDistance = rayRectDistance(observer, direction, wall);
     return wallDistance !== null && wallDistance < distance - 8;
   });
+}
+
+function isPointVisible(point) {
+  if (!visibilityEnabled) return true;
+  return canSee(state.player, point, PLAYER_FOV);
 }
 
 function drawVisibilityMask() {
@@ -911,15 +1083,15 @@ function drawVisibilityMask() {
   const origin = state.player;
   const bounds = state.room;
   const points = [];
-  const rayCount = 360;
+  const rayCount = 180;
+  const halfFov = PLAYER_FOV / 2;
   for (let i = 0; i < rayCount; i++) {
-    // ポリゴンの継ぎ目が壁の角に重なると、片側だけ長い直線が出るため半ステップずらす。
-    const angle = ((i + 0.5) / rayCount) * Math.PI * 2;
+    const angle = origin.facingAngle - halfFov + ((i + 0.5) / rayCount) * PLAYER_FOV;
     const direction = { x: Math.cos(angle), y: Math.sin(angle) };
     let distance = Number.POSITIVE_INFINITY;
     const roomDistance = rayRectDistance(origin, direction, bounds);
-    if (roomDistance !== null) distance = roomDistance;
-    for (const wall of state.walls) {
+    if (roomDistance !== null) distance = Math.min(distance, roomDistance, VISION_RANGE);
+    for (const wall of getBlockingWalls()) {
       const wallDistance = rayRectDistance(origin, direction, wall);
       if (wallDistance !== null && wallDistance < distance) distance = wallDistance;
     }
@@ -932,7 +1104,13 @@ function drawVisibilityMask() {
   ctx.globalCompositeOperation = "destination-out";
   ctx.beginPath();
   ctx.moveTo(origin.x, origin.y);
+  const startDirection = { x: Math.cos(origin.facingAngle - halfFov), y: Math.sin(origin.facingAngle - halfFov) };
+  const endDirection = { x: Math.cos(origin.facingAngle + halfFov), y: Math.sin(origin.facingAngle + halfFov) };
+  const startDistance = Math.min(rayRectDistance(origin, startDirection, bounds) || 0, VISION_RANGE);
+  const endDistance = Math.min(rayRectDistance(origin, endDirection, bounds) || 0, VISION_RANGE);
+  ctx.lineTo(origin.x + startDirection.x * startDistance, origin.y + startDirection.y * startDistance);
   points.forEach((point) => ctx.lineTo(point.x, point.y));
+  ctx.lineTo(origin.x + endDirection.x * endDistance, origin.y + endDirection.y * endDistance);
   ctx.closePath();
   ctx.fill();
   ctx.restore();
@@ -945,6 +1123,7 @@ function draw() {
   drawGates(state.gates);
   drawVisibilityMask();
   drawGates(state.gates);
+  drawFieldObjects(state.fieldObjects);
   drawFieldEffects(state.fieldEffects);
   drawObjects(state.objects, true);
   ctx.save();
@@ -956,6 +1135,19 @@ function draw() {
   drawCharacter(state.player, "#123");
   drawLabel(state.player, "You");
   drawAreaPortals(state.areaPortals);
+  if (state.gameOver) {
+    ctx.save();
+    ctx.fillStyle = "rgba(8, 8, 16, 0.8)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#ffb5b5";
+    ctx.font = "bold 44px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 20);
+    ctx.fillStyle = "#eee";
+    ctx.font = "18px sans-serif";
+    ctx.fillText("YouのHPが0になりました。やり直してください。", canvas.width / 2, canvas.height / 2 + 25);
+    ctx.restore();
+  }
 }
 
 function drawAreaPortals(portals) {
@@ -980,6 +1172,10 @@ function drawAreaPortals(portals) {
 
 // ---------- ステータス表示 ----------
 function updateStatusText() {
+  if (state.gameOver) {
+    statusEl.textContent = "GAME OVER / やり直すボタンで再挑戦できます。";
+    return;
+  }
   const remaining = state.objects.filter((o) => !o.found).length;
   if (state.status === "moving" && state.luna.targetObject) {
     statusEl.textContent = `${AREA_CONFIG[state.areaIndex].name} / Lunaは${state.luna.targetObject.label}に向かっています...`;
@@ -1057,7 +1253,7 @@ function buildLunaContext() {
     status: state.status,
     terrain,
     remaining: remainingObjects.map((obj) => obj.label),
-    nearby: remainingObjects.filter((obj) => isPointVisible(obj)).map((obj) => obj.label),
+    nearby: remainingObjects.filter((obj) => canSee(state.luna, obj, LUNA_FOV)).map((obj) => obj.label),
     luna: {
       hp: state.luna.hp,
       hpMax: state.luna.hpMax,
@@ -1126,7 +1322,7 @@ function loop() {
   draw();
   updateStatusText();
   updateStatsPanel();
-  if (state.status === "waiting") requestAutonomousAction();
+  if (!state.gameOver && state.status === "waiting") requestAutonomousAction();
   requestAnimationFrame(loop);
 }
 loop();
@@ -1292,6 +1488,11 @@ function regenerateMap() {
   appendChatLine("System", "（新しいマップを生成しました）");
 }
 
+function restartAfterGameOver() {
+  state = createGameState(state.relationship, state.areaIndex);
+  appendChatLine("System", "（このエリアをやり直します）");
+}
+
 function advanceArea(direction = "next") {
   const step = direction === "previous" ? -1 : 1;
   const nextAreaIndex = state.areaIndex + step;
@@ -1312,6 +1513,7 @@ function advanceArea(direction = "next") {
   const input = document.getElementById("chatInput");
   const sendBtn = document.getElementById("chatSendBtn");
   const newMapBtn = document.getElementById("newMapBtn");
+  const restartAfterGameOverBtn = document.getElementById("restartAfterGameOverBtn");
   const saveGameBtn = document.getElementById("saveGameBtn");
   const loadGameBtn = document.getElementById("loadGameBtn");
   const loadGameFileInput = document.getElementById("loadGameFileInput");
@@ -1323,6 +1525,11 @@ function advanceArea(direction = "next") {
   const playerStormBtn = document.getElementById("playerStormBtn");
   const usePlayerGemBtn = document.getElementById("usePlayerGemBtn");
   const visibilityToggle = document.getElementById("visibilityToggle");
+  const developerModeToggle = document.getElementById("developerModeToggle");
+  const developerPanel = document.getElementById("developerPanel");
+  const editorToolSelect = document.getElementById("editorToolSelect");
+  const saveMapTemplateBtn = document.getElementById("saveMapTemplateBtn");
+  const loadMapTemplateBtn = document.getElementById("loadMapTemplateBtn");
 
   function trigger() {
     const message = input.value.trim();
@@ -1338,6 +1545,7 @@ function advanceArea(direction = "next") {
     });
   }
   if (newMapBtn) newMapBtn.addEventListener("click", regenerateMap);
+  if (restartAfterGameOverBtn) restartAfterGameOverBtn.addEventListener("click", restartAfterGameOver);
   if (saveGameBtn) saveGameBtn.addEventListener("click", saveGameData);
   if (loadGameBtn) loadGameBtn.addEventListener("click", () => loadGameFileInput?.click());
   if (loadGameFileInput) loadGameFileInput.addEventListener("change", () => loadGameFile(loadGameFileInput.files[0]));
@@ -1349,4 +1557,16 @@ function advanceArea(direction = "next") {
   if (playerStormBtn) playerStormBtn.addEventListener("click", () => castPersistentSpell(state.player, "You"));
   if (usePlayerGemBtn) usePlayerGemBtn.addEventListener("click", () => useItem(state.player, "You", "謎の宝石"));
   if (visibilityToggle) visibilityToggle.addEventListener("change", () => { visibilityEnabled = visibilityToggle.checked; });
+  canvas.addEventListener("click", handleEditorCanvasClick);
+  if (developerModeToggle) developerModeToggle.addEventListener("change", () => {
+    mapEditor.enabled = developerModeToggle.checked;
+    developerPanel.classList.toggle("visible", mapEditor.enabled);
+    mapEditor.wallStart = null;
+  });
+  if (editorToolSelect) editorToolSelect.addEventListener("change", () => {
+    mapEditor.tool = editorToolSelect.value;
+    mapEditor.wallStart = null;
+  });
+  if (saveMapTemplateBtn) saveMapTemplateBtn.addEventListener("click", saveMapTemplate);
+  if (loadMapTemplateBtn) loadMapTemplateBtn.addEventListener("click", loadMapTemplate);
 })();

@@ -175,6 +175,20 @@
     font-size: 13px;
     color: #ccc;
   }
+  #developerPanel {
+    display: none;
+    margin-top: 14px;
+    width: 1200px;
+    max-width: 95vw;
+    padding: 10px 14px;
+    box-sizing: border-box;
+    background: #211f2b;
+    border: 1px solid #7c6a9d;
+    border-radius: 8px;
+  }
+  #developerPanel.visible { display: block; }
+  #developerPanel h3 { margin: 0 0 8px; font-size: 14px; }
+  #developerPanel select, #developerPanel button { margin: 3px; padding: 5px 8px; }
   .chat-battle {
     color: #ffb066;
   }
@@ -233,10 +247,37 @@
   <canvas id="gameCanvas" width="1500" height="900"></canvas>
   <div id="legend">🍎 リンゴ=HP回復　💧 水=MP回復　🎁 宝箱=アイテム　👾 敵=戦闘　🔮 謎の宝石=魔法　🗺️ 複数エリア探索</div>
   <button id="newMapBtn" type="button">🔄 新しいマップを生成</button>
+  <button id="restartAfterGameOverBtn" type="button">🔁 ゲームオーバーからやり直す</button>
   <button id="nextAreaBtn" type="button">🗺️ 次のエリアへ</button>
   <button id="saveGameBtn" type="button">💾 保存</button>
   <button id="loadGameBtn" type="button">📂 読み込み</button>
   <input id="loadGameFileInput" type="file" accept="application/json,.json" hidden>
+
+  <label class="visibility-toggle">
+    <input id="developerModeToggle" type="checkbox">
+    開発者モード
+  </label>
+  <section id="developerPanel" aria-label="開発者マップエディタ">
+    <h3>🛠️ マップエディタ</h3>
+    <select id="editorToolSelect" aria-label="配置ツール">
+      <option value="wall">壁</option>
+      <option value="gate">鍵付きゲート</option>
+      <option value="apple">リンゴ</option>
+      <option value="water">水</option>
+      <option value="treasure">宝箱</option>
+      <option value="enemy">敵</option>
+      <option value="town">町</option>
+      <option value="house">家</option>
+      <option value="npc">住人</option>
+      <option value="switch">スイッチ</option>
+      <option value="healing">回復地点</option>
+      <option value="trap">罠</option>
+      <option value="erase">消去</option>
+    </select>
+    <button id="saveMapTemplateBtn" type="button">🛠️ マップ保存</button>
+    <button id="loadMapTemplateBtn" type="button">🛠️ マップ読み込み</button>
+    <span>壁はキャンバスを2回クリックして範囲を作成します。</span>
+  </section>
 
   <section id="lunaControls" aria-label="Luna操作">
     <h3>🌙 Lunaへの指示</h3>
@@ -258,7 +299,7 @@
       <button id="usePlayerGemBtn" type="button">🔮 宝石を使う</button>
       <label class="visibility-toggle">
         <input id="visibilityToggle" type="checkbox" checked>
-        視界制限（壁の奥を隠す）
+        視界制限（向いている方向と壁の奥を隠す）
       </label>
     </div>
   </section>
@@ -309,6 +350,7 @@
       ※ server.py (python server.py) を起動していないとLunaは返事をできません<br>
       ※Lunaは状況を見て、自分で探索や魔法を選び、ときどき話しかけてきます<br>
       ※ 自分のアバター(You)は 矢印キー / WASD で操作できます<br>
+      ※ 視界はアバターの向いている方向に広がり、壁の向こうは見えません<br>
       ※「新しいマップを生成」ボタンで壁の配置と物体の位置がすべてランダムに変わります
     </div>
   </div>
